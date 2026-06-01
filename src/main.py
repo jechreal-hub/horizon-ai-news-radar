@@ -1,0 +1,84 @@
+import asyncio
+import sys
+from loguru import logger
+from src.config import settings
+from src.fetchers.rss import RSSFetcher
+from src.fetchers.sources import RSS_SOURCES
+from src.cleaners.dedup import DedupPipeline
+from src.cleaners.formatter import clean_content
+from src.llm.summarizer import LLMSummarizer
+from src.daily.report import DailyReport
+
+
+async def run_pipeline():
+    logger.info("=== Pipeline started ===")
+
+    # 1. Fetch
+    fetchers = [RSSFetcher(name, url) for name, url in RSS_SOURCES.items()]
+    all_articles = []
+    for f in fetchers:
+        try:
+            articles = await f.fetch()
+            logger.info(f"Fetched {len(articles)} from {f.source_name}")
+            all_articles.extend(articles)
+        except Exception as e:
+            logger.error(f"Failed to fetch {f.source_name}: {e}")
+
+    # 2. Clean & dedup
+    dedup = DedupPipeline()
+    clean_articles = []
+    for a in all_articles:
+        if not dedup.is_duplicate(a):
+            a.raw_content = clean_content(a.raw_content)
+            clean_articles.append(a)
+    logger.info(f"After dedup: {len(clean_articles)} articles")
+
+    # 3. LLM summarize
+    summarizer = LLMSummarizer()
+    for a in clean_articles[:settings.max_articles_per_fetch]:
+        result = await summarizer.summarize(a)
+        if result:
+            a.summary = result.get("summary", "")
+            a.tags = result.get("tags", [])
+            a.importance = result.get("importance", 3)
+
+    # 4. Generate daily report
+    report = DailyReport()
+    content = report.generate(clean_articles)
+    report.save(content)
+
+    logger.info(f"=== Pipeline done: {len(clean_articles)} articles processed ===")
+    return clean_articles
+
+
+async def cmd_fetch():
+    """Only fetch, no LLM"""
+    fetchers = [RSSFetcher(name, url) for name, url in RSS_SOURCES.items()]
+    for f in fetchers:
+        articles = await f.fetch()
+        logger.info(f"{f.source_name}: {len(articles)} articles")
+
+
+async def cmd_schedule():
+    from src.scheduler import start_scheduler
+    start_scheduler()
+    try:
+        await asyncio.Event().wait()
+    except KeyboardInterrupt:
+        logger.info("Scheduler stopped")
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "run"
+    if cmd == "fetch":
+        asyncio.run(cmd_fetch())
+    elif cmd == "schedule":
+        asyncio.run(cmd_schedule())
+    elif cmd == "run":
+        asyncio.run(run_pipeline())
+    else:
+        print(f"Usage: uv run python -m src.main [run|fetch|schedule]")
+
+
+if __name__ == "__main__":
+    main()
