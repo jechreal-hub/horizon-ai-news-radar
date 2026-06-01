@@ -1,0 +1,41 @@
+name: Daily Pipeline
+
+on:
+  schedule:
+    - cron: "0 0,4,10 * * *"   # UTC 时间 → 北京时间 08:00, 12:00, 18:00
+  workflow_dispatch:             # 支持手动触发
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Run pipeline
+        run: uv run python -m src.main run
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
+
+      - name: Commit reports
+        run: |
+          git config user.name "horizon-bot"
+          git config user.email "bot@horizon-ai-news.local"
+          git add data/
+          git diff --cached --quiet || git commit -m "📊 daily report $(date +%Y-%m-%d)"
+          git push
