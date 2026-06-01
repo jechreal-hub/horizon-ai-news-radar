@@ -9,6 +9,7 @@ env:
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
   LLM_MODEL: ${{ secrets.LLM_MODEL }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   run-pipeline:
